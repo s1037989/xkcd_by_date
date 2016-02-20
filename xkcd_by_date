@@ -1,0 +1,36 @@
+#!/usr/bin/env perl
+use Mojolicious::Lite;
+
+use DBM::Deep;
+use Date::Simple 'date';
+
+my $db = DBM::Deep->new('xkcd.db');
+my $ua = Mojo::UserAgent->new;
+
+helper last_xkcd => sub { ((sort { $a <=> $b } keys %$db)[-1]) };
+helper xkcd => sub {
+  my ($self, $num) = @_;
+  $ua->get($num ? "https://xkcd.com/$num/info.0.json" : "https://xkcd.com/info.0.json")->res->json;
+};
+
+helper update_db => sub {
+  my $self = shift;
+  return unless $self->last_xkcd < $self->xkcd->{num};
+  for ( $self->last_xkcd .. $self->xkcd->{num} ) {
+    $_ = $self->xkcd($_);
+    next unless $_->{num};
+    $db->{$_->{num}} = sprintf "%d%02d%02d", $_->{year}, $_->{month}, $_->{day};
+  }
+};
+
+get '/:date' => sub {
+  my $c = shift;
+  my $date = date($c->param('date'));
+  return $c->reply->not_found if $date > date();
+  $c->update_db;
+  my $num = ((grep { date($db->{$_}) == $date } sort { $a <=> $b } keys %$db)[-1]);
+  return $c->render(json => $c->xkcd($num)) if $num;
+  return $c->reply->not_found;
+};
+
+app->start;
